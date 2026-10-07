@@ -924,10 +924,21 @@ class CLITuiMixin:
             event.app.exit()
 
     def _tui_handle_ctrl_c(self, event):
-        """Ctrl+C priority: cancel voice recording → cancel foreground UI/overlay prompt or the wait for a
-        command on its own gateway socket (a plugin command, /cron) → clear a typed draft, even mid-run (a correction must never kill the turn)
-        → interrupt the running agent → force exit (second press within 2s) → when idle and empty, exit."""
+        """Ctrl+C priority: [double-press gate] → cancel voice recording → cancel foreground
+        UI/overlay prompt or the wait for a command on its own gateway socket (a plugin command,
+        /cron) → clear a typed draft, even mid-run (a correction must never kill the turn) →
+        interrupt the running agent (first action press) → force exit (second action press
+        within 2s) → when idle and empty, exit.
+
+        Double-press gate: the first Ctrl+C does nothing at all; the chain below only runs on a
+        second press within 1s. The gate resets on consumption so a third rapid press starts a
+        fresh window instead of chaining straight into force-exit.
+        """
         now = time.time()
+        if now - self._ctrl_c_gate_time >= 1.0:
+            self._ctrl_c_gate_time = now
+            return
+        self._ctrl_c_gate_time = 0.0
         if self._tui_cancel_voice_recording(event):
             return
         if self._tui_cancel_foreground_ui(event, closers=(
@@ -1831,6 +1842,7 @@ class CLITuiMixin:
         self._last_turn_interrupted = False
         self._should_exit = False
         self._last_ctrl_c_time = 0  # double Ctrl+C force-exit tracking
+        self._ctrl_c_gate_time = 0.0  # first-press swallow gate (see _tui_handle_ctrl_c)
 
         # No PluginManager._cli_ref: plugins load in the gateway, not here (PLG-7).
 

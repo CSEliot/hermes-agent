@@ -2,6 +2,7 @@
 search, plus a numbered text fallback for terminals without curses."""
 import re
 import sys
+import time
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from enum import Enum
@@ -96,10 +97,25 @@ def _read_numbered_input(prompt_text: str) -> str | _NumberedNavigation:
     install_modify_other_keys_aliases()
     bindings = KeyBindings()
 
-    @bindings.add(Keys.Escape)
-    @bindings.add(Keys.ControlC)
+    # Esc cancels immediately; Ctrl+C is gated (first press ignored, second within 1s cancels)
+    # so a reflex Ctrl+C can never blow away a prompt.
+    _cc_gate = {"t": 0.0}
+
     def _cancel(event) -> None:
         event.app.exit(result=_NumberedNavigation.CANCEL)
+
+    @bindings.add(Keys.Escape)
+    def _cancel_esc(event) -> None:
+        _cancel(event)
+
+    @bindings.add(Keys.ControlC)
+    def _cancel_ctrl_c(event) -> None:
+        now = time.time()
+        if now - _cc_gate["t"] < 1.0:
+            _cc_gate["t"] = 0.0
+            _cancel(event)
+        else:
+            _cc_gate["t"] = now
 
     if _NUMBERED_BACK_ENABLED.get():
         @bindings.add(Keys.Left)

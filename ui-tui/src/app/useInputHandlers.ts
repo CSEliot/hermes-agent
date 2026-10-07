@@ -283,6 +283,11 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       return
     }
 
+    if (overlay.confirm) {
+      // Mirror the component's onCancel: local dismiss, no server round-trip.
+      return patchOverlayState({ confirm: null })
+    }
+
     // The connection card has no local dismissal: the operation belongs to the running turn, so
     // ending the turn is what settles it (as `interrupt`) and closes the card.
     if (overlay.connection) {
@@ -447,6 +452,25 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   // still the dedicated discard (pushes the draft to history so Up recalls it).
   const lastEscRef = useRef(0)
 
+  // Ctrl+C gate (parity with the classic CLI _tui_handle_ctrl_c): the first press does
+  // nothing at all; only a second press within 1s runs the clear/interrupt/exit chain.
+  // The gate resets on consumption so a third rapid press starts a fresh window instead
+  // of chaining straight into the next action.
+  const ctrlCGateRef = useRef(0)
+  const passCtrlCGate = () => {
+    const now = Date.now()
+
+    if (now - ctrlCGateRef.current < 1000) {
+      ctrlCGateRef.current = 0
+
+      return true
+    }
+
+    ctrlCGateRef.current = now
+
+    return false
+  }
+
   useInput((ch, key, event) => {
     const live = getUiState()
 
@@ -518,7 +542,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       const fallThroughForScroll = promptOverlay && shouldFallThroughForScroll(key)
 
       if (promptOverlay && !fallThroughForScroll) {
-        if (isCtrl(key, ch, 'c')) {
+        if (isCtrl(key, ch, 'c') && passCtrlCGate()) {
           cancelOverlayFromCtrlC()
         }
 
@@ -526,7 +550,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
       }
 
       if (overlay.pager) {
-        if (key.escape || isCtrl(key, ch, 'c') || ch === 'q') {
+        if (key.escape || ch === 'q' || (isCtrl(key, ch, 'c') && passCtrlCGate())) {
           return patchOverlayState({ pager: null })
         }
 
@@ -593,7 +617,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
         return
       }
 
-      if (isCtrl(key, ch, 'c') || (key.escape && hasSensitivePrompt(overlay))) {
+      if ((isCtrl(key, ch, 'c') && passCtrlCGate()) || (key.escape && hasSensitivePrompt(overlay))) {
         cancelOverlayFromCtrlC()
       } else if (key.escape && overlay.sessions) {
         patchOverlayState({ sessions: false })
@@ -767,6 +791,10 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     }
 
     if (key.ctrl && ch.toLowerCase() === 'c') {
+      if (!passCtrlCGate()) {
+        return
+      }
+
       const ctrlC = resolveCtrlCComposerAction({
         busy: live.busy,
         hasDraft: Boolean(cState.input || cState.inputBuf.length),

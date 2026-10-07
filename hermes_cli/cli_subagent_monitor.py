@@ -450,9 +450,20 @@ def build_monitor_application(monitor, **kwargs):
     @kb.add('q', filter=normal)
     @kb.add('f6', filter=normal)
     @kb.add('c-t', filter=normal)
-    @kb.add('c-c')
     def close(event):
         app.exit()
+
+    # Ctrl+C gated: first press does nothing; a second within 1s closes the dock.
+    _cc_gate = {"t": 0.0}
+
+    @kb.add('c-c')
+    def close_ctrl_c(event):
+        now = time.time()
+        if now - _cc_gate["t"] < 1.0:
+            _cc_gate["t"] = 0.0
+            app.exit()
+        else:
+            _cc_gate["t"] = now
 
     layout = Layout(HSplit([
         Window(FormattedTextControl(header), height=1),

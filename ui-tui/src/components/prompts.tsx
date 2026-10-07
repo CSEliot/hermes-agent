@@ -389,7 +389,9 @@ export function ConfirmPrompt({ onCancel, onConfirm, req, t }: ConfirmPromptProp
   useInput((ch, key) => {
     const lower = ch.toLowerCase()
 
-    if (key.escape || (key.ctrl && lower === 'c') || lower === 'n') {
+    // Ctrl+C is handled by the global gated path (cancelOverlayFromCtrlC) so a reflex
+    // first press never cancels this prompt; Esc/'n' stay instant by design.
+    if (key.escape || lower === 'n') {
       return onCancel()
     }
 
