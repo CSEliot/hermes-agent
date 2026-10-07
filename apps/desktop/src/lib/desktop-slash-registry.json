@@ -1,4 +1,5 @@
 {
+  "/abandon": "terminal",
   "/agents": null,
   "/approvals": null,
   "/approve": null,

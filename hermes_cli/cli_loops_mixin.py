@@ -99,21 +99,91 @@ class CLILoopsMixin:
         _cprint(f"  {_DIM}{t('cli.display.ui_redrawn')}{_RST}")
 
     def _cmd_clear(self, cmd_original: str):
-        from cli import ChatConsole, _build_compact_banner, _clear_output_history, _cprint, get_tool_definitions
-        from hermes_cli.banner import build_welcome_banner
-        if self._confirm_destructive_slash(
+        return self._clear_and_reset_screen(
             "clear",
             "This clears the screen and starts a new session.\n"
             "The current conversation history will be discarded.",
             cmd_original=cmd_original,
-        ) is None:
+        )
+
+    def _cmd_abandon(self, cmd_original: str):
+        """Clear the screen, start a new session, and PERMANENTLY DELETE the session being left
+        (SQLite history + on-disk transcripts, delegate sub-sessions and the earlier compression
+        chain cascaded). Like /clear but irreversible: it carries its own
+        ``abandon_slash_confirm`` gate, and note the shared ``now``/``--yes``/``-y`` inline-skip
+        bypasses that confirmation and deletes without a prompt — intended for scripted use,
+        not reflex typing."""
+        # Like /clear, but the session being left is permanently deleted (SQLite
+        # history + on-disk transcripts), not just discarded-if-empty on rotation.
+        return self._clear_and_reset_screen(
+            "abandon",
+            "This clears the screen and starts a new session.\n"
+            "The session you are leaving is PERMANENTLY DELETED — its\n"
+            "conversation history and transcripts, plus any delegate\n"
+            "sub-sessions and earlier compression segments. This cannot\n"
+            "be undone.",
+            cmd_original=cmd_original,
+            delete_left_session=True,
+        )
+
+    def _clear_and_reset_screen(self, command: str, detail: str, cmd_original: str,
+                                delete_left_session: bool = False):
+        from cli import (ChatConsole, _build_compact_banner, _clear_output_history, _cprint,
+                         get_tool_definitions)
+        from hermes_cli.banner import build_welcome_banner
+        if delete_left_session:
+            confirm = self._confirm_destructive_slash(
+                command, detail, cmd_original=cmd_original,
+                gate_key="abandon_slash_confirm",
+                title=f"⚠️  /{command} — PERMANENTLY DELETES this session",
+                always_msg="🔒 Future /abandon will delete without confirmation.")
+        else:
+            confirm = self._confirm_destructive_slash(command, detail, cmd_original=cmd_original)
+        if confirm is None:
             return True  # confirmation cancelled — command handled, keep REPL alive
+        # Capture the outgoing id before new_session() rotates it, so /abandon can hard-delete
+        # it afterward (new_session only discards-if-empty; abandon deletes regardless).
+        left_session_id = self.session_id
         self.new_session(silent=True)
+        # Deletion feedback is deferred: printing it here would be wiped by the screen
+        # clear below, so it's emitted after the fresh banner (mirrors the /fresh-start line).
+        delete_msg = None
+        if delete_left_session and left_session_id and left_session_id != self.session_id:
+            from cli import _DIM, _RST, get_hermes_home
+            if not self._session_db:
+                delete_msg = (f"  {_DIM}✗ Session database unavailable — session "
+                              f"{_escape(left_session_id)} was NOT deleted{_RST}")
+            else:
+                try:
+                    # Guarded like every other user-initiated delete path (sessions_cmd, browse,
+                    # web router): a row with an active turn lease or compression lock — e.g. a
+                    # background delegate still flushing into it — must not be deleted mid-write.
+                    # delete_sessions (not delete_session) so the whole compression chain goes with
+                    # it: a compressed session's earlier links would otherwise resurface in the
+                    # session list (#57543). A guarded row is SKIPPED into skipped_ids, never raised.
+                    skipped: list[str] = []
+                    deleted = self._session_db.delete_sessions(
+                        [left_session_id], sessions_dir=get_hermes_home() / "sessions",
+                        exclude_active_write_guards=True, skipped_ids=skipped,
+                        include_compression_chain=True)
+                    if left_session_id in skipped:
+                        delete_msg = (f"  {_DIM}✗ Session {_escape(left_session_id)} still active "
+                                      f"(turn lease / background work) — kept, NOT deleted{_RST}")
+                    elif deleted > 0:
+                        delete_msg = f"  {_DIM}✓ Abandoned session {_escape(left_session_id)} deleted{_RST}"
+                    else:
+                        delete_msg = f"  {_DIM}✗ Session {_escape(left_session_id)} not found for deletion{_RST}"
+                except Exception:
+                    from cli import logger
+                    logger.debug("Could not delete abandoned session %s", left_session_id, exc_info=True)
+                    delete_msg = f"  {_DIM}✗ Failed to delete session {_escape(left_session_id)} (see logs){_RST}"
         _clear_output_history()
         if not self._app:
             self.console.clear()
             self.show_banner()
             print(_fresh_start())
+            if delete_msg:
+                _cprint(delete_msg)
             self._print_random_tip()
             return
         # Inside the TUI, Rich's console.clear() and self.console both go through
@@ -138,6 +208,8 @@ class CLILoopsMixin:
                                          disabled_toolsets=self.disabled_toolsets, quiet_mode=True)
             build_welcome_banner(tools=tools, **plan.banner_kw)
         _cprint(_fresh_start())
+        if delete_msg:
+            _cprint(delete_msg)
         self._print_random_tip()
 
     def _cmd_title(self, cmd_original: str):

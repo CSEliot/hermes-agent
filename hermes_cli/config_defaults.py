@@ -1697,6 +1697,10 @@ DEFAULT_CONFIG = {
         # / Cancel via tools.slash_confirm; native buttons on Telegram/ Discord/Slack). "Always
         # Approve" → false. HERMES_TUI_NO_CONFIRM=1 skips the TUI modal.
         "destructive_slash_confirm": True,
+        # /abandon additionally PERMANENTLY DELETES the session being left (history + transcripts,
+        # delegate children included), so it keeps its own gate: opting out of the generic
+        # destructive-slash prompt does not silence the delete confirmation. "Always Approve" → false.
+        "abandon_slash_confirm": True,
     },
     # Permanently allowed dangerous command patterns (added via "always" approval).
     "command_allowlist": [],

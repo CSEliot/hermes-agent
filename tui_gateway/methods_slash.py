@@ -341,6 +341,7 @@ _LIVE_SLASH_OUTPUT = {
     "tools": ("No tools available.", _format_live_tools_output),
     "help": (None, _format_live_help_output),
     "clear": (None, "Screen clear is terminal-only; desktop/TUI chat left unchanged."),
+    "abandon": (None, "Session abandon is terminal-only; desktop/TUI session left unchanged."),
     "models": (None, "Use /model to view or switch the current model; desktop users can also open the model picker."),
     "rename": (None, "Use /title <name> to rename this session."),
     "effort": (None, "Use /reasoning <effort> to change reasoning effort.")}

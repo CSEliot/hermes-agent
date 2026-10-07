@@ -91,6 +91,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
                gateway_only=True, args_hint="[off|help|session-id]"),
     CommandDef("clear", "Clear screen and start a new session", "Session",
                cli_only=True, desktop="terminal"),
+    CommandDef("abandon", "Clear screen, start a new session, and permanently delete the one you left", "Session",
+               cli_only=True, desktop="terminal"),
     CommandDef("redraw", "Force a full UI repaint (recovers from terminal drift)", "Session",
                cli_only=True, desktop="terminal"),
     CommandDef("history", "Show conversation history", "Session",

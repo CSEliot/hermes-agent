@@ -527,11 +527,20 @@ class CLIModalMixin:
         return " ".join(kept), len(kept) != len(tokens)
 
     def _confirm_destructive_slash(
-        self, command: str, detail: str, cmd_original: Optional[str] = None) -> Optional[str]:
-        """Confirm a destructive slash command (``/clear``, ``/new``/``/reset``, ``/undo``): returns
-        ``"once"``, ``"always"`` (persists the opt-out) or ``None`` (cancelled). Gate off → "once"
-        silently; ``now`` / ``--yes`` / ``-y`` in ``cmd_original`` bypasses the modal (callers strip
-        the tokens via :meth:`_split_destructive_skip`).
+        self, command: str, detail: str, cmd_original: Optional[str] = None, *,
+        gate_key: str = "destructive_slash_confirm",
+        title: Optional[str] = None,
+        always_msg: Optional[str] = None,
+    ) -> Optional[str]:
+        """Confirm a destructive slash command (``/clear``, ``/new``/``/reset``, ``/undo``,
+        ``/abandon``): returns ``"once"``, ``"always"`` (persists the opt-out) or ``None``
+        (cancelled). Gate off → "once" silently; ``now`` / ``--yes`` / ``-y`` in
+        ``cmd_original`` bypasses the modal (callers strip the tokens via
+        :meth:`_split_destructive_skip`). Keyword-only ``gate_key``/``title``/``always_msg``
+        let a command with harsher consequences than "discard screen" (``/abandon`` =
+        permanent session delete) keep its OWN approval opt-out so a prior "Always Approve"
+        on the generic gate can never silently authorize it; they default to the shared
+        ``destructive_slash_confirm`` strings.
 
         Inline-skip: if ``cmd_original`` contains ``now``, ``--yes``, or ``-y`` as an argument (e.g.
         ``/reset now``, ``/new --yes My title``), the modal is bypassed and ``"once"`` is returned
@@ -543,15 +552,15 @@ class CLIModalMixin:
         if cmd_original and self._split_destructive_skip(cmd_original)[1]:
             return "once"
         return _gated_confirm(
-            self, command, "destructive_slash_confirm",
-            title=t("cli.modal.destructive_title", command=command),
+            self, command, gate_key,
+            title=title or t("cli.modal.destructive_title", command=command),
             detail=detail,
             choices=[
                 ("once", t("cli.modal.approve_once"), t("cli.modal.approve_once_detail")),
                 ("always", t("cli.modal.always_approve"), t("cli.modal.always_approve_detail")),
                 ("cancel", t("cli.modal.cancel"), t("cli.modal.cancel_detail"))],
             unchanged=t("cli.modal.conversation_unchanged"),
-            always_msg=t("cli.modal.destructive_always_msg"),
+            always_msg=always_msg or t("cli.modal.destructive_always_msg"),
             persist_failed_msg=t("cli.modal.persist_failed_proceeding"))
 
     def _ring_bell(self, prompt: bool = False, context: str = "", detail: str = "") -> None:
