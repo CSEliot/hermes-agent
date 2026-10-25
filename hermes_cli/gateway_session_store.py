@@ -288,25 +288,46 @@ class GatewaySessionStore:
         return subscription
 
     def delete_session(self, session_id, sessions_dir=None):
+        """Main's ``SessionDB.delete_session`` as the gateway's ``delete`` mutation (the whole lineage
+        and its delegate children, refused while work is live). The mutation retires rows only, so the
+        deleted ids' on-disk artifacts in *sessions_dir* (secret-bearing snapshots, request dumps) are
+        scrubbed here, as the web delete route does. False only for an id the reader confirms absent:
+        the owner also answers ``not_found`` for an existing cold row it cannot restore."""
         self.snapshots.pop(session_id, None)
-        snapshot = self.call("session.resume", session_id=session_id)
+
+        def confirmed_absent(exc):
+            db = self._db()
+            return str(exc) == "not_found" and db is not None and db.get_session(session_id) is None
+
+        try:
+            snapshot = self.call("session.resume", session_id=session_id)
+        except GatewayClientError as exc:
+            if confirmed_absent(exc):
+                return False
+            raise
         # The owner answers and subscribes under the id it resolved the read to (a compression
         # segment maps to its logical owner), and reuses a subscription this viewer already holds.
         resolved = snapshot.get("session_id") or session_id
         state = self.connection.states.get(resolved)
         held = state is not None and state.subscription_id is not None
         try:
-            self._mutate(session_id, "delete", {}, snapshot)
-        except GatewayClientError:
+            receipt = self._mutate(session_id, "delete", {}, snapshot) or {}
+        except GatewayClientError as exc:
             # Hand back only the attachment the read made, with a plain detach: an end_reason would
             # run the owner's viewer close (fencing the session's delegations, ending it at idle).
             if not held and snapshot.get("subscription_id"):
                 try:
                     self.call("session.detach", session_id=resolved, subscription_id=snapshot["subscription_id"])
-                except GatewayClientError as exc:
-                    logger.debug("session.detach after a refused delete failed: %s", exc)
+                except GatewayClientError as detach_exc:
+                    logger.debug("session.detach after a refused delete failed: %s", detach_exc)
+            if confirmed_absent(exc):
+                return False
             raise
         self._leave(session_id)
+        if sessions_dir is not None:
+            from hermes_state import SessionDB
+            for sid in receipt.get("deleted_ids") or (session_id,):
+                SessionDB._remove_session_files(sessions_dir, str(sid))
         return True
 
     def end_session(self, session_id, reason=None):
