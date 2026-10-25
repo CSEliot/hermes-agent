@@ -154,29 +154,32 @@ class CLILoopsMixin:
                 delete_msg = (f"  {_DIM}✗ Session database unavailable — session "
                               f"{_escape(left_session_id)} was NOT deleted{_RST}")
             else:
+                from hermes_cli.gateway_client import GatewayClientError
+                sid = _escape(left_session_id)
                 try:
-                    # Guarded like every other user-initiated delete path (sessions_cmd, browse,
-                    # web router): a row with an active turn lease or compression lock — e.g. a
-                    # background delegate still flushing into it — must not be deleted mid-write.
-                    # delete_sessions (not delete_session) so the whole compression chain goes with
-                    # it: a compressed session's earlier links would otherwise resurface in the
-                    # session list (#57543). A guarded row is SKIPPED into skipped_ids, never raised.
-                    skipped: list[str] = []
-                    deleted = self._session_db.delete_sessions(
-                        [left_session_id], sessions_dir=get_hermes_home() / "sessions",
-                        exclude_active_write_guards=True, skipped_ids=skipped,
-                        include_compression_chain=True)
-                    if left_session_id in skipped:
-                        delete_msg = (f"  {_DIM}✗ Session {_escape(left_session_id)} still active "
-                                      f"(turn lease / background work) — kept, NOT deleted{_RST}")
-                    elif deleted > 0:
-                        delete_msg = f"  {_DIM}✓ Abandoned session {_escape(left_session_id)} deleted{_RST}"
-                    else:
-                        delete_msg = f"  {_DIM}✗ Session {_escape(left_session_id)} not found for deletion{_RST}"
+                    # self._session_db is the gateway session store (the gateway is the single
+                    # writer): delete_session is its `delete` mutation, which takes the whole
+                    # lineage (compression segments, delegate children) and refuses live work in the
+                    # same transaction, then scrubs the deleted ids' files in sessions_dir. False
+                    # means the row is already gone: new_session() above prunes an empty session.
+                    try:
+                        self._session_db.delete_session(
+                            left_session_id, sessions_dir=get_hermes_home() / "sessions")
+                        delete_msg = f"  {_DIM}✓ Abandoned session {sid} deleted{_RST}"
+                    except GatewayClientError as exc:
+                        if str(exc) == "session_busy":
+                            delete_msg = (f"  {_DIM}✗ Session {sid} still active "
+                                          f"(turn lease / background work) — kept, NOT deleted{_RST}")
+                        elif str(exc) == "unknown_execution":
+                            delete_msg = (f"  {_DIM}✗ Session {sid} has a turn lost across a gateway restart"
+                                          f" — kept, NOT deleted. Acknowledge it with: hermes sessions discard "
+                                          f"{sid}, then delete it with: hermes sessions delete {sid}{_RST}")
+                        else:
+                            raise
                 except Exception:
                     from cli import logger
-                    logger.debug("Could not delete abandoned session %s", left_session_id, exc_info=True)
-                    delete_msg = f"  {_DIM}✗ Failed to delete session {_escape(left_session_id)} (see logs){_RST}"
+                    logger.warning("Could not delete abandoned session %s", left_session_id, exc_info=True)
+                    delete_msg = f"  {_DIM}✗ Failed to delete session {sid} (see logs){_RST}"
         _clear_output_history()
         if not self._app:
             self.console.clear()
